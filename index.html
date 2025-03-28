@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web-LLM Qwen2.5 Coder Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        #chat-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        #chat-output {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #fafafa;
+        }
+        #user-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #7f8c8d;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: 20%;
+        }
+        .bot-message {
+            background-color: #f0f0f0;
+            margin-right: 20%;
+        }
+        pre {
+            background-color: #282c34;
+            color: #abb2bf;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Web-LLM Qwen2.5 Coder Demo</h1>
+    
+    <div id="chat-container">
+        <div id="chat-output"></div>
+        <input type="text" id="user-input" placeholder="Type your coding question here..." disabled>
+        <button id="send-btn" disabled>Send</button>
+        <div id="status">Initializing model (this may take a minute)...</div>
+    </div>
+
+    <script type="module">
+        import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const chatOutput = document.getElementById('chat-output');
+            const userInput = document.getElementById('user-input');
+            const sendBtn = document.getElementById('send-btn');
+            const status = document.getElementById('status');
+
+            // Initialize the engine
+            let engine;
+            try {
+                // Initialize the engine with the Qwen2.5-Coder model
+                engine = await webllm.CreateMLCEngine(
+                    "Qwen2.5-Coder-0.5B-Instruct-q4f32_1-MLC",
+                    { initProgressCallback: reportProgress }
+                );
+                
+                status.textContent = "Model loaded and ready!";
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                
+                // Add welcome message
+                addMessage("bot", "Hello! I'm Qwen2.5 Coder, a coding assistant running in your browser. Ask me any coding questions!");
+            } catch (error) {
+                status.textContent = `Error loading model: ${error.message}`;
+                console.error(error);
+            }
+
+            // Handle send button click
+            sendBtn.addEventListener('click', async () => {
+                const message = userInput.value.trim();
+                if (!message) return;
+                
+                userInput.value = '';
+                addMessage("user", message);
+                
+                // Disable input while generating
+                userInput.disabled = true;
+                sendBtn.disabled = true;
+                status.textContent = "Generating response...";
+                
+                try {
+                    // Generate response
+                    const response = await engine.chat.completions.create({
+                        messages: [{ role: "user", content: message }],
+                        stream: true,
+                    });
+                    
+                    let fullResponse = '';
+                    const messageElement = addMessage("bot", "");
+                    
+                    for await (const chunk of response) {
+                        const chunkText = chunk.choices[0]?.delta?.content || "";
+                        fullResponse += chunkText;
+                        messageElement.innerHTML = formatCodeBlocks(fullResponse);
+                        // Auto-scroll to bottom
+                        chatOutput.scrollTop = chatOutput.scrollHeight;
+                    }
+                } catch (error) {
+                    addMessage("bot", `Error: ${error.message}`);
+                    console.error(error);
+                } finally {
+                    // Re-enable input
+                    userInput.disabled = false;
+                    sendBtn.disabled = false;
+                    status.textContent = "Ready";
+                    userInput.focus();
+                }
+            });
+            
+            // Also allow pressing Enter to send
+            userInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendBtn.click();
+                }
+            });
+
+            // Helper function to add messages to the chat
+            function addMessage(role, content) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${role}-message`;
+                
+                if (content) {
+                    messageDiv.innerHTML = role === "user" ? content : formatCodeBlocks(content);
+                }
+                
+                chatOutput.appendChild(messageDiv);
+                chatOutput.scrollTop = chatOutput.scrollHeight;
+                return messageDiv;
+            }
+            
+            // Format code blocks in responses
+            function formatCodeBlocks(text) {
+                // Simple markdown code block detection and formatting
+                return text.replace(/```(\w*)\n([\s\S]*?)\n```/g, (match, lang, code) => {
+                    return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
+                });
+            }
+            
+            // Report loading progress
+            function reportProgress(report) {
+                status.textContent = `Loading model: ${report.text} (${Math.floor(report.progress * 100)}%)`;
+            }
+        });
+    </script>
+</body>
+</html>
